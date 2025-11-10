@@ -1,0 +1,254 @@
+ # agents.yaml
+agents:
+  summarizer:
+    description: "醫療器材審查摘要專家。"
+    default_prompt: "你是一位醫療器材審查摘要專家。請以繁體中文摘要內容in markdown with keyword in coral 請建立30 entities with context and comments in a table in traditional chinese. Please also create JSON dataset in traditional chinese based on previous results"
+    temperature: 0.1
+    max_tokens: 8096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  資料擷取代理:
+    description: "從非結構化文本中提取結構化資料。"
+    default_prompt: "請從提供的文本中，識別並提取所有關鍵實體，例如人名、地點、組織、日期和產品名稱。請建立30 entities with context and comments in a table in traditional chinese. Please also create JSON dataset in traditional chinese based on previous results"
+    temperature: 0.1
+    max_tokens: 8096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  中文說明書比對專家:
+    description: "中文說明書比對專家。"
+    default_prompt: "你是一位醫療器材審查摘要專家。根據上傳之檔案(包含English origional and traditional chinese breif translateion），please compare English origional and traditional chinese breif translateion and summarize 20 difference in a table in traditional chinese with ref pages and comments in traditional chinese. Please also create a summary about the comparison results in 繁體中文。"
+    temperature: 0.1
+    max_tokens: 8048
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  申請資料摘要助理:
+    description: "申請資料摘要助理。"
+    default_prompt: "請以繁體中文摘要內容in markdown with keyword in coral color. Also create a table include 20 key items with comments in 繁體中文"
+    temperature: 0.1
+    max_tokens: 8024
+    provider: "OpenAI"
+    model: "gpt-4o-mini"
+  特定審查項目代理:
+    description: "特定審查項目。"
+    default_prompt: "你是一位醫療器材審查摘要專家。請以繁體中文摘要內容in markdown with keyword in coral color. Also create a table include 20 key items with comments in 繁體中文。請另外確認文件中是否包含以下確認項目：。"
+    temperature: 0.1
+    max_tokens: 8096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  關鍵詞提取代理:
+    description: "從文本中識別並提取最重要的關鍵詞或短語。"
+    default_prompt: "請分析以下文章，並列出代表其主要主題和概念的前10個最重要的關鍵詞。"
+    temperature: 0.4
+    max_tokens: 1024
+    provider: "OpenAI"
+    model: "gpt-4.1-mini"
+  文本分類代理:
+    description: "根據預定義的類別對文本進行分類。"
+    default_prompt: "請閱讀以下新聞文章，並將其分類為以下類別之一：政治、體育、科技、娛樂或商業。"
+    temperature: 0.2
+    max_tokens: 512
+    provider: "Gemini"
+    model: "gemini-2.5-flash-lite"
+  問答代理:
+    description: "根據提供的上下文回答問題。"
+    default_prompt: "根據提供的文本，回答以下問題：[在此插入問題]。如果答案在文本中找不到，請說明「資訊不足」。"
+    temperature: 0.1
+    max_tokens: 2048
+    provider: "Grok"
+    model: "grok-4-fast-reasoning"
+  意圖識別代理:
+    description: "識別用戶查詢背後的意圖。"
+    default_prompt: "分析以下用戶請求，並將其意圖分類為「查詢資訊」、「請求協助」、「提供反饋」或「進行交易」。"
+    temperature: 0.3
+    max_tokens: 1024
+    provider: "OpenAI"
+    model: "gpt-5-nano"
+  文本生成代理:
+    description: "根據給定的提示生成新的文本內容。"
+    default_prompt: "為一家新的高科技咖啡店撰寫一段引人入勝的營銷文案，重點介紹其獨特的沖泡方法和舒適的氛圍。"
+    temperature: 0.8
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  代碼生成代理:
+    description: "根據自然語言描述生成代碼片段。"
+    default_prompt: "用Python編寫一個函數，該函數接受一個整數列表，並返回一個僅包含偶數的新列表。"
+    temperature: 0.2
+    max_tokens: 2048
+    provider: "Grok"
+    model: "grok-4"
+  數據清理代理:
+    description: "清理和預處理文本數據以進行分析。"
+    default_prompt: "請處理以下文本數據：移除所有標點符號，將所有文本轉換為小寫，並刪除常見的停用詞。"
+    temperature: 0.1
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash-lite"
+  主題建模代理:
+    description: "從文檔集合中發現潛在的主題。"
+    default_prompt: "分析所附的文檔集合，並識別出討論的前五個主要主題。為每個主題提供一個簡短的描述性標籤。"
+    temperature: 0.6
+    max_tokens: 4096
+    provider: "OpenAI"
+    model: "gpt-4o-mini"
+  命名實體識別 (NER) 代理:
+    description: "在文本中定位並分類命名實體。"
+    default_prompt: "請在以下段落中識別並標記所有人名（PERSON）、組織（ORG）和地點（GPE）。"
+    temperature: 0.2
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  關係提取代理:
+    description: "識別文本中實體之間的關係。"
+    default_prompt: "從提供的文本中，提取公司與其總部位置之間的關係。以（公司，總部位置）的元組列表形式呈現結果。"
+    temperature: 0.4
+    max_tokens: 4096
+    provider: "OpenAI"
+    model: "gpt-4.1-mini"
+  文本相似度代理:
+    description: "計算兩個文本片段之間的相似度。"
+    default_prompt: "評估以下兩段文本的語義相似度，並提供一個介於0（完全不同）和1（完全相同）之間的分數，並簡要解釋你的理由。"
+    temperature: 0.3
+    max_tokens: 1024
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  文本校對代理:
+    description: "檢查和糾正文本中的語法和拼寫錯誤。"
+    default_prompt: "請校對以下文本，糾正任何語法錯誤、拼寫錯誤和標點符號錯誤。"
+    temperature: 0.1
+    max_tokens: 4096
+    provider: "Grok"
+    model: "grok-3-mini"
+  風格轉換代理:
+    description: "將文本從一種風格轉換為另一種風格（例如，正式到非正式）。"
+    default_prompt: "請將以下正式的商業電子郵件改寫為更隨意、友好的語氣，同時保留其核心信息。"
+    temperature: 0.7
+    max_tokens: 2048
+    provider: "OpenAI"
+    model: "gpt-4o-mini"
+  論點挖掘代理:
+    description: "從文本中識別和提取論點結構（聲稱和前提）。"
+    default_prompt: "分析以下社論，識別其主要論點。清楚地標示出主張和支持該主張的前提。"
+    temperature: 0.5
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  趨勢分析代理:
+    description: "從時間序列文本數據中識別趨勢和模式。"
+    default_prompt: "分析過去一年的客戶反饋數據，並總結出關於產品質量和客戶服務的主要趨勢。"
+    temperature: 0.6
+    max_tokens: 4096
+    provider: "OpenAI"
+    model: "gpt-4.1-mini"
+  偏見檢測代理:
+    description: "檢測文本中的潛在偏見（例如，性別、種族）。"
+    default_prompt: "請審查以下招聘啟事，識別任何可能存在偏見或排斥性的語言，並提出更中性的替代方案。"
+    temperature: 0.2
+    max_tokens: 2048
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  法律文件分析代理:
+    description: "從法律文件中提取關鍵條款和條款。"
+    default_prompt: "從所附的合同中，提取並總結管轄法律、責任限制和終止條件等條款。"
+    temperature: 0.1
+    max_tokens: 8192
+    provider: "Grok"
+    model: "grok-4"
+  醫療報告摘要代理:
+    description: "總結醫療報告以供快速審查。"
+    default_prompt: "為所附的病人出院摘要創建一個簡潔的摘要，突出顯示診斷、進行的治療和後續護理說明。"
+    temperature: 0.2
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  金融報告分析代理:
+    description: "從金融報告中提取財務指標和見解。"
+    default_prompt: "分析所附的季度收益報告，並提取關鍵財務數據，如收入、淨收入和每股收益。總結公司的業績亮點。"
+    temperature: 0.3
+    max_tokens: 8192
+    provider: "OpenAI"
+    model: "gpt-5-nano"
+  社交媒體監控代理:
+    description: "分析社交媒體帖子以了解公眾情緒和趨勢。"
+    default_prompt: "監控過去24小時內提到我們品牌的推文，並根據情緒（正面、負面、中性）對其進行分類。識別任何新出現的主題或問題。"
+    temperature: 0.6
+    max_tokens: 4096
+    provider: "Gemini"
+    model: "gemini-2.5-flash-lite"
+  技術文檔寫作代理:
+    description: "協助創建清晰簡潔的技術文檔。"
+    default_prompt: "為一個新的REST API端點撰寫技術文檔，該端點用於檢索用戶數據。包括端點URL、請求方法、參數和一個示例響應。"
+    temperature: 0.2
+    max_tokens: 4096
+    provider: "Grok"
+    model: "grok-4-fast-reasoning"
+  創意寫作夥伴:
+    description: "為創意寫作項目提供想法和靈感。"
+    default_prompt: "為一個設定在反烏托邦未來，其中情感被禁止的短篇故事，提供三個可能的情節轉折。"
+    temperature: 0.9
+    max_tokens: 2048
+    provider: "OpenAI"
+    model: "gpt-4o-mini"
+  市場研究代理:
+    description: "分析市場數據並生成研究報告。"
+    default_prompt: "根據提供的市場數據，撰寫一份關於電動汽車市場增長的簡要報告，重點介紹主要參與者、市場驅動因素和未來預測。"
+    temperature: 0.5
+    max_tokens: 8192
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  教育內容創建代理:
+    description: "為教育目的創建測驗、學習指南和解釋。"
+    default_prompt: "為中學生創建一個關於光合作用過程的10個問題的多項選擇測驗，並為每個問題提供答案和簡要解釋。"
+    temperature: 0.3
+    max_tokens: 4096
+    provider: "OpenAI"
+    model: "gpt-4.1-mini"
+  招聘助理代理:
+    description: "篩選簡歷並識別合格的候選人。"
+    default_prompt: "審查所附的簡歷，尋找具有至少五年Python編程經驗和機器學習項目經驗的軟件工程師職位候選人。列出最符合條件的前三名候選人。"
+    temperature: 0.2
+    max_tokens: 4096
+    provider: "Grok"
+    model: "grok-3-mini"
+  客戶支持自動化代理:
+    description: "為常見客戶查詢提供自動化響應。"
+    default_prompt: "根據提供的常見問題解答，為客戶關於「如何重置我的密碼？」的查詢，撰寫一個清晰、循序漸進的回答。"
+    temperature: 0.1
+    max_tokens: 2048
+    provider: "Gemini"
+    model: "gemini-2.5-flash-lite"
+  合規性審核代理:
+    description: "審查文件是否符合特定法規或標準。"
+    default_prompt: "將所附的營銷材料與公司品牌指南進行比較，並標示出任何不一致之處，例如不正確的標誌使用或偏離批准的色板。"
+    temperature: 0.1
+    max_tokens: 8192
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  QMS觀察報告準備代理:
+    description: "QMS觀察報告準備代理。"
+    default_prompt: "你是QMS稽查報告撰寫專家。使用者將提供Article A與List B清單，請保持Article A內容格式，單純利用List B替換相關文件。請以markdown呈現替換後結果，替換資料請以coral color珊瑚色標示。"
+    temperature: 0.1
+    max_tokens: 8192
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  QMS稽查報告彙整代理1:
+    description: "QMS稽查報告彙整代理1。"
+    default_prompt: "你是QMS稽查報告撰寫專家。使用者將提供Article C與Article D，請保持Article D完整內容，單純將Article D相關內容移動至Article C對應位置。移動後之Article C內容請以markdown呈現替換後結果，替換資料請以coral color珊瑚色標示。"
+    temperature: 0.1
+    max_tokens: 8192
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  QMS稽查報告彙整代理2:
+    description: "QMS稽查報告彙整代理2。"
+    default_prompt: "你是QMS稽查報告撰寫專家。使用者將提供Article E與Article F，請保持Article F完整內容，單純將Article F依照[1]、[2]等項目內容移動至Article E對應位置。移動後之Article F內容請以markdown呈現替換後結果，替換資料請以coral color珊瑚色標示。"
+    temperature: 0.1
+    max_tokens: 8192
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
+  summarizer:
+    description: "從非結構化文本中提取結構化資料。"
+    default_prompt: "請從提供的文本中，識別並提取所有關鍵實體，例如人名、地點、組織、日期和產品名稱。請建立30 entities with context and comments in a table in traditional chinese. Please also create JSON dataset in traditional chinese based on previous results"
+    temperature: 0.1
+    max_tokens: 8096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
