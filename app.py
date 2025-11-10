@@ -390,7 +390,7 @@ def t(key: str) -> str:
     return TRANSLATIONS[st.session_state.language].get(key, key)
 
 # ==============================================================================
-# Utility Functions
+# Utility and Parsing Functions
 # ==============================================================================
 def read_env_secret(key: str) -> Tuple[bool, Optional[str]]:
     """Checks for an environment variable and returns its status and value."""
@@ -398,13 +398,88 @@ def read_env_secret(key: str) -> Tuple[bool, Optional[str]]:
     return (True, v) if v else (False, None)
 
 def parse_pdf_to_text(pdf_bytes: bytes) -> str:
-    """Extracts text from PDF bytes."""
+    """Extracts text from PDF bytes using PyPDF."""
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception as e:
-        st.error(f"PDF Parsing Error: {e}")
+        st.error(f"Standard PDF Parsing Error: {e}")
+        return ""
+
+def parse_pdf_with_llm(pdf_bytes: bytes, provider: str, model_name: str, clients: Dict[str, Any]) -> str:
+    """Extracts text from PDF bytes using a multimodal LLM."""
+    if not PDF2IMAGE_AVAILABLE:
+        st.error("The 'pdf2image' library is required for LLM-based OCR. Please install it (`pip install pdf2image`) and ensure 'poppler' is installed on your system.")
+        return ""
+
+    if not clients.get(provider):
+        st.error(f"API client for '{provider}' is not configured. Please add the API key in the sidebar.")
+        return ""
+
+    try:
+        progress_bar = st.progress(0, text="Converting PDF pages to images...")
+        images = convert_from_bytes(pdf_bytes)
+        total_pages = len(images)
+        extracted_text_parts = []
+
+        for i, img in enumerate(images):
+            progress_text = f"Processing page {i+1} of {total_pages} with {provider}..."
+            progress_bar.progress((i + 1) / total_pages, text=progress_text)
+            
+            try:
+                page_text = ""
+                prompt_text = "Extract all text from this document page, maintaining the original structure and reading order as best as possible."
+
+                if provider == "gemini":
+                    llm_model = clients["gemini"].GenerativeModel(model_name)
+                    response = llm_model.generate_content([prompt_text, img])
+                    page_text = response.text
+                
+                elif provider == "openai":
+                    buffered = io.BytesIO()
+                    img.save(buffered, format="PNG")
+                    img_bytes = buffered.getvalue()
+                    base64_image = base64.b64encode(img_bytes).decode('utf-8')
+                    
+                    messages = [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
+                        ]
+                    }]
+                    
+                    try:
+                        # First attempt with standard 'max_tokens'
+                        response = clients["openai"].chat.completions.create(
+                            model=model_name, messages=messages, max_tokens=4096
+                        )
+                    except BadRequestError as e:
+                        # If model expects 'max_completion_tokens', retry with it
+                        if "max_completion_tokens" in str(e):
+                            st.warning(f"Model '{model_name}' uses 'max_completion_tokens'. Retrying...")
+                            response = clients["openai"].chat.completions.create(
+                                model=model_name, messages=messages, max_completion_tokens=4096
+                            )
+                        else:
+                            raise  # Re-raise other errors
+
+                    page_text = response.choices[0].message.content
+
+                extracted_text_parts.append(page_text)
+
+            except Exception as page_e:
+                st.warning(f"Could not process page {i+1}: {str(page_e)}")
+                extracted_text_parts.append(f"\n[--- OCR failed for page {i+1} ---]\n")
+        
+        progress_bar.empty()
+        return "\n\n---\nPage Separator\n---\n\n".join(extracted_text_parts)
+
+    except Exception as e:
+        st.error(f"LLM-based OCR Error: {e}")
+        if "No poppler" in str(e):
+             st.error("Poppler not found. Please install poppler and ensure it's in your system's PATH.")
         return ""
 
 def parse_plain_file(name: str, content: bytes) -> str:
@@ -427,17 +502,8 @@ def load_agents_config() -> Dict[str, Any]:
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
-                # Validate structure
-                if config and isinstance(config, dict) and "agents" in config:
-                    if isinstance(config["agents"], list):
-                        return config
-                    else:
-                        st.warning("Invalid agents.yaml structure: 'agents' is not a list")
-                        return {"version": 1, "agents": []}
-                else:
-                    st.warning("Invalid agents.yaml structure: missing 'agents' key")
-                    return {"version": 1, "agents": []}
-        # Return default empty config if file doesn't exist
+                if config and isinstance(config, dict) and "agents" in config and isinstance(config["agents"], list):
+                    return config
         return {"version": 1, "agents": []}
     except Exception as e:
         st.error(f"Error loading agents config: {e}")
@@ -445,26 +511,16 @@ def load_agents_config() -> Dict[str, Any]:
 
 def get_enabled_agents(agents_cfg: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Safely filters and returns a list of enabled agent dictionaries."""
-    if not agents_cfg or "agents" not in agents_cfg:
+    if not agents_cfg or not isinstance(agents_cfg.get("agents"), list):
         return []
-    
-    potential_agents = agents_cfg.get("agents", [])
-    if not isinstance(potential_agents, list):
-        return []
-
-    return [
-        agent for agent in potential_agents
-        if isinstance(agent, dict) and agent.get("enabled", True)
-    ]
+    return [agent for agent in agents_cfg["agents"] if isinstance(agent, dict) and agent.get("enabled", True)]
 
 # ==============================================================================
 # Word Cloud & Network Graph Functions
 # ==============================================================================
 def extract_keywords(text: str, top_n: int = 30) -> List[Tuple[str, int]]:
     """Extract top keywords from text"""
-    # Simple keyword extraction (can be enhanced with NLP libraries)
     words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
-    # Filter out common words
     stop_words = {'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will', 'your', 'their', 'which', 'about', 'would', 'there', 'could', 'should'}
     filtered_words = [w for w in words if w not in stop_words]
     counter = Counter(filtered_words)
@@ -602,19 +658,40 @@ def run_agent(agent_def: Dict[str, Any], user_input: str, clients: Dict[str, Any
 
     try:
         t0 = time.time()
+        output = ""
+
         if provider_resolved == "openai":
-            resp = clients["openai"].chat.completions.create(
-                model=model,
-                messages=[{"role":"system","content":prompt},{"role":"user","content":user_input}],
-                temperature=temperature,
-                max_tokens=max_tokens)
-            output = resp.choices[0].message.content
+            messages = [{"role":"system","content":prompt},{"role":"user","content":user_input}]
+            try:
+                # First attempt with the standard 'max_tokens' parameter
+                resp = clients["openai"].chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                output = resp.choices[0].message.content
+            except BadRequestError as e:
+                # If the error is about the unsupported parameter, retry with 'max_completion_tokens'
+                if "max_completion_tokens" in str(e):
+                    st.warning(f"Model '{model}' does not support 'max_tokens'. Retrying with 'max_completion_tokens'.")
+                    resp = clients["openai"].chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_completion_tokens=max_tokens  # Use the alternative parameter name
+                    )
+                    output = resp.choices[0].message.content
+                else:
+                    raise  # Re-raise any other BadRequestError
+
         elif provider_resolved == "gemini":
             model_obj = clients["gemini"].GenerativeModel(model)
             content = f"{prompt}\n\n---\n\n{user_input}"
             resp = model_obj.generate_content(content, 
                 generation_config={"temperature": temperature, "max_output_tokens": max_tokens})
             output = resp.text
+
         elif provider_resolved == "grok":
             from xai_sdk.chat import user as xai_user, system as xai_system
             chat = clients["grok"].chat.create(model=model)
@@ -631,7 +708,6 @@ def run_agent(agent_def: Dict[str, Any], user_input: str, clients: Dict[str, Any
 # ==============================================================================
 # Initialize API Keys (before sidebar)
 # ==============================================================================
-# Initialize API keys from environment or set to None
 gem_env, gem_env_val = read_env_secret("GEMINI_API_KEY")
 gemini_key = gem_env_val if gem_env else None
 
@@ -648,77 +724,54 @@ with st.sidebar:
     emoji = ANIMAL_THEMES[st.session_state.theme_style]["emoji"]
     st.title(f"{emoji} {t('settings')}")
 
-    # Theme Settings
     with st.expander("🎨 " + t('theme'), expanded=True):
         mode_col, style_col = st.columns(2)
         with mode_col:
-            new_mode = st.selectbox(
-                t('theme'),
-                ["light", "dark"],
-                index=0 if st.session_state.theme_mode == "light" else 1,
-                key="mode_select"
-            )
+            new_mode = st.selectbox(t('theme'), ["light", "dark"], index=1, key="mode_select")
             if new_mode != st.session_state.theme_mode:
                 st.session_state.theme_mode = new_mode
                 st.rerun()
         
         with style_col:
-            new_style = st.selectbox(
-                "Style",
-                list(ANIMAL_THEMES.keys()),
-                index=list(ANIMAL_THEMES.keys()).index(st.session_state.theme_style),
-                format_func=lambda x: f"{ANIMAL_THEMES[x]['emoji']} {x}",
-                key="style_select"
-            )
+            new_style = st.selectbox("Style", list(ANIMAL_THEMES.keys()), index=list(ANIMAL_THEMES.keys()).index(st.session_state.theme_style), format_func=lambda x: f"{ANIMAL_THEMES[x]['emoji']} {x}", key="style_select")
             if new_style != st.session_state.theme_style:
                 st.session_state.theme_style = new_style
                 st.rerun()
     
-    # Language Settings
     with st.expander("🌐 " + t('language')):
-        new_lang = st.radio(
-            t('language'),
-            ["en", "zh"],
-            index=0 if st.session_state.language == "en" else 1,
-            format_func=lambda x: "English" if x == "en" else "繁體中文",
-            horizontal=True
-        )
+        new_lang = st.radio(t('language'), ["en", "zh"], index=0, format_func=lambda x: "English" if x == "en" else "繁體中文", horizontal=True)
         if new_lang != st.session_state.language:
             st.session_state.language = new_lang
             st.rerun()
 
-    # API Keys
     with st.expander("🔐 " + t('api_keys'), expanded=not (gem_env or oa_env or xai_env)):
         if gem_env:
-            st.success("✅ Gemini API Key loaded from environment")
+            st.success("✅ Gemini API Key loaded")
         else:
             gemini_key_input = st.text_input("Gemini API Key", type="password", key="gemini_input")
-            if gemini_key_input:
-                gemini_key = gemini_key_input
+            if gemini_key_input: gemini_key = gemini_key_input
 
         if oa_env:
-            st.success("✅ OpenAI API Key loaded from environment")
+            st.success("✅ OpenAI API Key loaded")
         else:
             openai_key_input = st.text_input("OpenAI API Key", type="password", key="openai_input")
-            if openai_key_input:
-                openai_key = openai_key_input
+            if openai_key_input: openai_key = openai_key_input
 
         if xai_env:
-            st.success("✅ Grok API Key loaded from environment")
+            st.success("✅ Grok API Key loaded")
         else:
             xai_key_input = st.text_input("XAI API Key (Grok)", type="password", key="xai_input")
-            if xai_key_input:
-                xai_key = xai_key_input
+            if xai_key_input: xai_key = xai_key_input
 
-# Initialize clients with API keys
     clients = get_model_clients(openai_key, gemini_key, xai_key)
-    # Provider Health
+
     with st.expander("⚙️ Provider Health"):
          ph = st.session_state.provider_health
          for prov in ["gemini", "openai", "grok"]:
              status = ph.get(prov, "Not Configured")
              chip_class = "chip-pass" if status == "OK" else "chip-warn"
-             st.markdown(f"**{prov}**: <span class='status-chip {chip_class}'>{status}</span>", unsafe_allow_html=True)
+             st.markdown(f"**{prov.capitalize()}**: <span class='status-chip {chip_class}'>{status}</span>", unsafe_allow_html=True)
+
 # ==============================================================================
 # Main Application
 # ==============================================================================
@@ -726,14 +779,12 @@ st.title(t('title'))
 st.markdown(f"<p style='text-align: center; color: var(--secondary-text-color);'>{t('subtitle')}</p>", unsafe_allow_html=True)
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 
-# Load agents configuration
 if st.session_state.agents_cfg is None:
     st.session_state.agents_cfg = load_agents_config()
 
 agents_cfg = st.session_state.agents_cfg
 all_agents = agents_cfg.get("agents", [])
 
-# Create tabs
 tab_upload, tab_agent_select, tab_pipeline, tab_dashboard, tab_reports = st.tabs([
     f"📂 {t('upload_parse')}",
     f"🛠️ {t('agent_config')}",
@@ -747,7 +798,23 @@ tab_upload, tab_agent_select, tab_pipeline, tab_dashboard, tab_reports = st.tabs
 # ==============================================================================
 with tab_upload:
     st.header(f"Step 1: {t('upload_parse')}")
-    input_method = st.radio("Input method:", ["Upload Files", "Paste Text"], horizontal=True)
+
+    with st.expander("⚙️ OCR & Parsing Settings"):
+        ocr_method = st.radio(
+            "PDF OCR Method",
+            ["Standard (Python-based)", "Advanced (LLM-based)"],
+            horizontal=True,
+            help="Standard is fast and works for text-based PDFs. Advanced uses vision models for scanned or complex PDFs but is slower and requires API credits."
+        )
+        if ocr_method == "Advanced (LLM-based)":
+            st.info("ℹ️ Advanced OCR requires the `poppler` library to be installed on your system.")
+            ocr_provider = st.selectbox("LLM Provider", ["gemini", "openai"], key="ocr_provider")
+            if ocr_provider == "gemini":
+                ocr_model = st.text_input("Vision Model Name", value="gemini-1.5-pro-latest", key="ocr_model_gemini")
+            else:
+                ocr_model = st.text_input("Vision Model Name", value="gpt-4o", key="ocr_model_openai")
+    
+    input_method = st.radio("Input method:", ["Upload Files", "Paste Text"], horizontal=True, key="input_method_selector")
 
     if input_method == "Upload Files":
         files = st.file_uploader("Upload PDF/TXT/MD files", type=["pdf", "txt", "md"], 
@@ -755,13 +822,24 @@ with tab_upload:
         if files:
             st.session_state.uploaded_docs = [f.name for f in files]
             parsed_chunks = []
-            for f in files:
-                if f.name.endswith('.pdf'):
-                    parsed_chunks.append(parse_pdf_to_text(f.read()))
-                else:
-                    parsed_chunks.append(parse_plain_file(f.name, f.read()))
+            with st.spinner(f"Processing {len(files)} files... This may take a while with Advanced OCR."):
+                for f in files:
+                    if f.name.endswith('.pdf'):
+                        if ocr_method == "Advanced (LLM-based)":
+                            selected_provider = st.session_state.get("ocr_provider", "gemini")
+                            model_key = f"ocr_model_{selected_provider}"
+                            selected_model = st.session_state.get(model_key, "")
+                            parsed_chunks.append(parse_pdf_with_llm(f.read(), selected_provider, selected_model, clients))
+                        else:
+                            parsed_chunks.append(parse_pdf_to_text(f.read()))
+                    else:
+                        parsed_chunks.append(parse_plain_file(f.name, f.read()))
+            
             st.session_state.parsed_text = "\n\n---\n\n".join(filter(None, parsed_chunks))
-            st.success(f"✅ Processed {len(files)} files. Tokens: {estimate_tokens(st.session_state.parsed_text)}")
+            if st.session_state.parsed_text:
+                st.success(f"✅ Processed {len(files)} files. Total Tokens: {estimate_tokens(st.session_state.parsed_text)}")
+            else:
+                st.error("Failed to extract any text from the uploaded files.")
     else:
         pasted_text = st.text_area("Paste content:", height=300, placeholder="Paste your text here...")
         if pasted_text:
@@ -769,13 +847,14 @@ with tab_upload:
             st.success(f"✅ Text loaded. Tokens: {estimate_tokens(pasted_text)}")
 
     if st.session_state.parsed_text:
-        with st.expander("📄 Preview"):
-            st.text_area("Parsed Text", st.session_state.parsed_text[:4000], height=200, disabled=True)
-        
-        # Word cloud visualization
-        if st.checkbox("Show Keywords"):
+        with st.expander("📄 Preview Parsed Text"):
+            st.text_area("Parsed Text", st.session_state.parsed_text[:5000], height=250, disabled=True)
+        if st.checkbox("Show Keyword Cloud"):
             st.markdown(create_word_cloud_viz(st.session_state.parsed_text), unsafe_allow_html=True)
 
+# ==============================================================================
+# Tab 2: Agent Configuration & Selection
+# ==============================================================================
 # ==============================================================================
 # Tab 2: Agent Configuration & Selection
 # ==============================================================================
@@ -783,7 +862,7 @@ with tab_agent_select:
     st.header(f"Step 2: {t('agent_config')}")
     
     if not all_agents:
-        st.warning("No agents found in configuration. Please upload an agents.yaml file.")
+        st.warning("No agents found. Please create or upload an `agents.yaml` file.")
         
         # Provide download for sample configuration
         col1, col2 = st.columns(2)
@@ -795,80 +874,73 @@ with tab_agent_select:
                 mime="text/yaml",
                 use_container_width=True
             )
-        with col2:
-            st.download_button(
-                "📥 Download 31-Agent Config (繁中)",
-                data=st.session_state.get("advanced_agents_yaml", "# Upload your own config").encode('utf-8'),
-                file_name="agents_fda_advanced_zh.yaml",
-                mime="text/yaml",
-                use_container_width=True,
-                disabled=True,
-                help="Full 31-agent configuration (see artifact fda_agents_yaml_zh)"
-            )
         
-        st.info("Upload a YAML file with the following structure:")
+        st.info("Upload a YAML file with agent definitions:")
         st.code("""version: 1
 agents:
-  - id: agent_1
-    name: Agent Name
-    description: Agent description
+  - id: agent_id_1
+    name: My First Agent
+    description: A brief description of what this agent does.
     enabled: true
     model:
       provider: gemini
-      name: gemini-2.5-flash
-      temperature: 0.25
+      name: gemini-1.5-flash
+      temperature: 0.3
       max_tokens: 4096
     prompt: |
-      Your prompt here...
+      Your detailed system prompt goes here.
+      You can use multiple lines.
 """, language="yaml")
         
         agents_file = st.file_uploader("Upload agents.yaml", type=["yaml", "yml"], key="agents_uploader")
         if agents_file:
             try:
                 uploaded_config = yaml.safe_load(agents_file.getvalue())
-                
-                # Validate structure
-                if not isinstance(uploaded_config, dict):
-                    st.error("Invalid YAML: Root must be a dictionary")
-                elif "agents" not in uploaded_config:
-                    st.error("Invalid YAML: Missing 'agents' key")
-                elif not isinstance(uploaded_config["agents"], list):
-                    st.error("Invalid YAML: 'agents' must be a list")
-                else:
+                if isinstance(uploaded_config, dict) and "agents" in uploaded_config and isinstance(uploaded_config["agents"], list):
                     st.session_state.agents_cfg = uploaded_config
-                    st.success(f"✅ Loaded {len(uploaded_config['agents'])} agents from file")
+                    st.success(f"✅ Loaded {len(uploaded_config['agents'])} agents from file.")
                     st.rerun()
-            except yaml.YAMLError as e:
-                st.error(f"YAML parsing error: {e}")
+                else:
+                    st.error("Invalid YAML structure. The file must contain a top-level 'agents' key with a list of agent configurations.")
             except Exception as e:
-                st.error(f"Error loading file: {e}")
+                st.error(f"Error loading or parsing the agent configuration file: {e}")
     else:
         st.subheader(f"🎯 {t('select_agents')}")
         
-        # Display all available agents with selection
+        # This list will hold the IDs of the agents the user checks
         selected_agent_ids = []
         
+        # Loop through each agent defined in the configuration
         for i, agent in enumerate(all_agents):
             agent_id = agent.get("id", f"agent_{i}")
             agent_name = agent.get("name", f"Agent {i+1}")
-            agent_desc = agent.get("description", "No description")
             
-            col1, col2 = st.columns([1, 4])
+            # Ensure model key exists to prevent errors
+            if "model" not in agent:
+                agent["model"] = {}
+
+            col1, col2 = st.columns([0.05, 0.95])
             
             with col1:
+                # Checkbox to select or deselect the agent for the pipeline
                 is_selected = st.checkbox(
-                    "Select",
-                    value=agent_id in st.session_state.selected_agents,
-                    key=f"select_{agent_id}_{i}"  # BUG FIX: Added index 'i' for uniqueness
+                    " ", 
+                    value=(agent_id in st.session_state.selected_agents), 
+                    key=f"select_{agent_id}_{i}",
+                    label_visibility="hidden"
                 )
                 if is_selected:
                     selected_agent_ids.append(agent_id)
             
             with col2:
+                # An expander for each agent to view and modify its configuration
                 with st.expander(f"{'✅' if is_selected else '⬜'} {agent_name}", expanded=False):
-                    st.markdown(f"**Description:** {agent_desc}")
+                    st.markdown(f"**Description:** {agent.get('description', '_No description provided._')}")
                     
-                    # Agent configuration
+                    st.markdown("---")
+                    st.markdown("**Model Configuration**")
+                    
+                    # UI for model parameters
                     model_cfg = agent.get("model", {})
                     
                     col_a, col_b, col_c = st.columns(3)
@@ -877,53 +949,56 @@ agents:
                             "Provider",
                             ["auto", "gemini", "openai", "grok"],
                             index=["auto", "gemini", "openai", "grok"].index(model_cfg.get("provider", "auto")),
-                            key=f"provider_{agent_id}_{i}" # BUG FIX: Added index 'i'
+                            key=f"provider_{agent_id}_{i}"
                         )
                     with col_b:
                         model_name = st.text_input(
-                            "Model",
+                            "Model Name",
                             value=model_cfg.get("name", ""),
-                            key=f"model_{agent_id}_{i}" # BUG FIX: Added index 'i'
+                            key=f"model_{agent_id}_{i}"
                         )
                     with col_c:
                         temperature = st.slider(
                             "Temperature",
-                            0.0, 1.0,
-                            float(model_cfg.get("temperature", 0.3)),
-                            0.05,
-                            key=f"temp_{agent_id}_{i}" # BUG FIX: Added index 'i'
+                            min_value=0.0, max_value=1.0,
+                            value=float(model_cfg.get("temperature", 0.3)),
+                            step=0.05,
+                            key=f"temp_{agent_id}_{i}"
                         )
                     
                     max_tokens = st.number_input(
                         "Max Tokens",
-                        min_value=100,
-                        max_value=8000,
+                        min_value=256, max_value=16384,
                         value=int(model_cfg.get("max_tokens", 4096)),
-                        step=100,
-                        key=f"tokens_{agent_id}_{i}" # BUG FIX: Added index 'i'
+                        step=256,
+                        key=f"tokens_{agent_id}_{i}",
+                        help="Maximum number of tokens to generate in the response."
                     )
                     
+                    st.markdown("**System Prompt (Editable)**")
+                    # Editable text area for the agent's prompt
                     prompt = st.text_area(
-                        "System Prompt",
+                        "Prompt",
                         value=agent.get("prompt", ""),
-                        height=200,
-                        key=f"prompt_{agent_id}_{i}" # BUG FIX: Added index 'i'
+                        height=250,
+                        key=f"prompt_{agent_id}_{i}",
+                        label_visibility="collapsed"
                     )
                     
-                    # Update agent configuration
+                    # IMPORTANT: Update the agent's configuration in memory with the values from the UI
                     agent["model"]["provider"] = provider
                     agent["model"]["name"] = model_name
                     agent["model"]["temperature"] = temperature
                     agent["model"]["max_tokens"] = max_tokens
                     agent["prompt"] = prompt
         
+        # Update the session state with the list of selected agents
         st.session_state.selected_agents = selected_agent_ids
         
         if selected_agent_ids:
-            st.success(f"✅ Selected {len(selected_agent_ids)} agents for pipeline")
+            st.success(f"✅ Selected {len(selected_agent_ids)} agents for the pipeline. You can now proceed to the 'Agent Pipeline' tab.")
         else:
-            st.info("Select at least one agent to create a pipeline")
-
+            st.info("Select one or more agents using the checkboxes to build your pipeline.")
 # ==============================================================================
 # Tab 3: Agent Pipeline Execution
 # ==============================================================================
@@ -935,69 +1010,42 @@ with tab_pipeline:
     else:
         st.subheader(f"📋 Pipeline ({len(st.session_state.selected_agents)} agents)")
         
-        # Display pipeline visualization
         if PLOTLY_AVAILABLE and st.session_state.pipeline_results:
             fig = create_agent_network_graph(st.session_state.pipeline_results)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+            if fig: st.plotly_chart(fig, use_container_width=True, key="pipeline_flow_chart")
         
-        # Execute pipeline step by step
         for idx, agent_id in enumerate(st.session_state.selected_agents):
             agent = next((a for a in all_agents if a.get("id") == agent_id), None)
-            if not agent:
-                continue
+            if not agent: continue
             
             agent_name = agent.get("name", f"Agent {idx+1}")
-            
             st.markdown(f"<div class='pipeline-step'>", unsafe_allow_html=True)
             st.markdown(f"### Step {idx+1}: {agent_name}")
             
-            # Input section
             col_input, col_output = st.columns(2)
-            
             with col_input:
                 st.markdown(f"**📥 {t('input')}**")
-                
-                # Determine input source
                 if idx == 0:
                     default_input = st.session_state.parsed_text
                     input_source = "Parsed Document"
                 else:
                     prev_agent_id = st.session_state.selected_agents[idx-1]
                     default_input = st.session_state.agent_outputs.get(prev_agent_id, "")
-                    prev_agent = next((a for a in all_agents if a.get("id") == prev_agent_id), None)
-                    input_source = prev_agent.get("name", "Previous Agent") if prev_agent else "Previous Agent"
+                    prev_agent = next((a for a in all_agents if a.get("id") == prev_agent_id), {})
+                    input_source = prev_agent.get("name", "Previous Agent")
                 
                 st.caption(f"Source: {input_source}")
-                
-                # Allow modification of input
-                agent_input = st.text_area(
-                    "Input (editable)",
-                    value=default_input,
-                    height=200,
-                    key=f"input_{agent_id}_{idx}"
-                )
+                agent_input = st.text_area("Input (editable)", value=default_input, height=200, key=f"input_{agent_id}_{idx}")
             
             with col_output:
                 st.markdown(f"**📤 {t('output')}**")
-                
-                # Display existing output or execution button
                 existing_output = st.session_state.agent_outputs.get(agent_id, "")
-                
                 if existing_output:
-                    st.text_area(
-                        "Output",
-                        value=existing_output,
-                        height=200,
-                        key=f"output_display_{agent_id}_{idx}",
-                        disabled=True
-                    )
+                    st.text_area("Output", value=existing_output, height=200, key=f"output_display_{agent_id}_{idx}", disabled=True)
                 else:
                     st.info("Click Execute to run this agent")
-            
-            # Execution controls
-            col_exec, col_modify, col_status = st.columns([2, 2, 3])
-            
+
+            col_exec, col_status = st.columns([2, 3])
             with col_exec:
                 if st.button(f"▶️ {t('execute')}", key=f"exec_{agent_id}_{idx}"):
                     if not agent_input.strip():
@@ -1007,66 +1055,33 @@ with tab_pipeline:
                             output = run_agent(agent, agent_input, clients)
                             st.session_state.agent_outputs[agent_id] = output
                             
-                            # Store in pipeline results
-                            result = {
-                                "step": idx + 1,
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "input": agent_input[:500] + "..." if len(agent_input) > 500 else agent_input,
-                                "output": output[:500] + "..." if len(output) > 500 else output,
-                                "timestamp": time.time()
-                            }
+                            result = {"step": idx + 1, "agent_id": agent_id, "agent_name": agent_name, "input": agent_input, "output": output, "timestamp": time.time()}
                             
-                            # Update or append result
-                            existing_idx = next((i for i, r in enumerate(st.session_state.pipeline_results) 
-                                               if r.get("agent_id") == agent_id), None)
-                            if existing_idx is not None:
-                                st.session_state.pipeline_results[existing_idx] = result
-                            else:
-                                st.session_state.pipeline_results.append(result)
-                            
+                            existing_idx = next((i for i, r in enumerate(st.session_state.pipeline_results) if r.get("agent_id") == agent_id), None)
+                            if existing_idx is not None: st.session_state.pipeline_results[existing_idx] = result
+                            else: st.session_state.pipeline_results.append(result)
                             st.rerun()
-            
-            with col_modify:
-                if existing_output:
-                    if st.button(f"✏️ {t('modify')}", key=f"modify_{agent_id}_{idx}"):
-                        modified_output = st.text_area(
-                            "Edit Output",
-                            value=existing_output,
-                            height=200,
-                            key=f"modify_text_{agent_id}_{idx}"
-                        )
-                        if st.button("💾 Save", key=f"save_{agent_id}_{idx}"):
-                            st.session_state.agent_outputs[agent_id] = modified_output
-                            st.success("Output updated!")
-                            st.rerun()
-            
+
             with col_status:
                 if existing_output:
                     latency = st.session_state.last_latency.get(agent.get("model", {}).get("provider", ""), 0)
-                    st.markdown(f"<span class='status-chip chip-pass'>✅ Completed</span>", unsafe_allow_html=True)
-                    st.caption(f"⏱️ {latency:.2f}s")
+                    st.markdown(f"<span class='status-chip chip-pass'>✅ Completed</span> <span class='status-chip chip-info'>⏱️ {latency:.2f}s</span>", unsafe_allow_html=True)
                 else:
                     st.markdown(f"<span class='status-chip chip-info'>⏳ Pending</span>", unsafe_allow_html=True)
             
             st.markdown("</div>", unsafe_allow_html=True)
-            
-            # Add arrow between steps
             if idx < len(st.session_state.selected_agents) - 1:
                 st.markdown("<div style='text-align: center; font-size: 2em; color: var(--primary-color);'>⬇️</div>", unsafe_allow_html=True)
         
-        # Batch execution
         st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
         if st.button("🚀 Execute All Agents in Sequence", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
             current_input = st.session_state.parsed_text
             
             for idx, agent_id in enumerate(st.session_state.selected_agents):
                 agent = next((a for a in all_agents if a.get("id") == agent_id), None)
-                if not agent:
-                    continue
+                if not agent: continue
                 
                 agent_name = agent.get("name", f"Agent {idx+1}")
                 status_text.text(f"Running {agent_name}...")
@@ -1074,26 +1089,15 @@ with tab_pipeline:
                 output = run_agent(agent, current_input, clients)
                 st.session_state.agent_outputs[agent_id] = output
                 
-                result = {
-                    "step": idx + 1,
-                    "agent_id": agent_id,
-                    "agent_name": agent_name,
-                    "input": current_input[:500] + "..." if len(current_input) > 500 else current_input,
-                    "output": output[:500] + "..." if len(output) > 500 else output,
-                    "timestamp": time.time()
-                }
-                
-                existing_idx = next((i for i, r in enumerate(st.session_state.pipeline_results) 
-                                   if r.get("agent_id") == agent_id), None)
-                if existing_idx is not None:
-                    st.session_state.pipeline_results[existing_idx] = result
-                else:
-                    st.session_state.pipeline_results.append(result)
+                result = {"step": idx + 1, "agent_id": agent_id, "agent_name": agent_name, "input": current_input, "output": output, "timestamp": time.time()}
+                existing_idx = next((i for i, r in enumerate(st.session_state.pipeline_results) if r.get("agent_id") == agent_id), None)
+                if existing_idx is not None: st.session_state.pipeline_results[existing_idx] = result
+                else: st.session_state.pipeline_results.append(result)
                 
                 current_input = output
                 progress_bar.progress((idx + 1) / len(st.session_state.selected_agents))
             
-            status_text.text("✅ All agents completed!")
+            status_text.success("✅ All agents completed!")
             time.sleep(1)
             st.rerun()
 
@@ -1103,129 +1107,52 @@ with tab_pipeline:
 with tab_dashboard:
     st.header(f"📊 {t('dashboard')}")
     
-    # KPI Cards
     k1, k2, k3, k4 = st.columns(4)
-    
     with k1:
-        st.markdown(f"""
-            <div class='kpi-card'>
-                <h3>Input {t('tokens')}</h3>
-                <p>{estimate_tokens(st.session_state.parsed_text)}</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
+        st.markdown(f"<div class='kpi-card'><h3>Input {t('tokens')}</h3><p>{estimate_tokens(st.session_state.parsed_text)}</p></div>", unsafe_allow_html=True)
     with k2:
         total_output = sum(estimate_tokens(output) for output in st.session_state.agent_outputs.values())
-        st.markdown(f"""
-            <div class='kpi-card'>
-                <h3>Output {t('tokens')}</h3>
-                <p>{total_output}</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
+        st.markdown(f"<div class='kpi-card'><h3>Output {t('tokens')}</h3><p>{total_output}</p></div>", unsafe_allow_html=True)
     with k3:
         completed = len(st.session_state.agent_outputs)
         total = len(st.session_state.selected_agents)
         completion_rate = (completed / total * 100) if total > 0 else 0
-        st.markdown(f"""
-            <div class='kpi-card'>
-                <h3>{t('completion_rate')}</h3>
-                <p>{completion_rate:.0f}%</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
+        st.markdown(f"<div class='kpi-card'><h3>{t('completion_rate')}</h3><p>{completion_rate:.0f}%</p></div>", unsafe_allow_html=True)
     with k4:
         total_latency = sum(st.session_state.last_latency.values())
-        st.markdown(f"""
-            <div class='kpi-card'>
-                <h3>Total {t('latency')}</h3>
-                <p>{total_latency:.1f}s</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='kpi-card'><h3>Total {t('latency')}</h3><p>{total_latency:.1f}s</p></div>", unsafe_allow_html=True)
     
     st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
     
-    # Visualizations
     col_viz1, col_viz2 = st.columns(2)
-    
     with col_viz1:
         st.subheader("⚡ Agent Performance")
-        
         if st.session_state.pipeline_results and PLOTLY_AVAILABLE:
-            perf_data = []
-            for result in st.session_state.pipeline_results:
-                agent_name = result.get("agent_name", "Unknown")
-                # Estimate processing time (simplified)
-                input_tokens = estimate_tokens(result.get("input", ""))
-                output_tokens = estimate_tokens(result.get("output", ""))
-                
-                perf_data.append({
-                    "Agent": agent_name,
-                    "Input Tokens": input_tokens,
-                    "Output Tokens": output_tokens
-                })
-            
+            perf_data = [{"Agent": r["agent_name"], "Input Tokens": estimate_tokens(r["input"]), "Output Tokens": estimate_tokens(r["output"])} for r in st.session_state.pipeline_results]
             df_perf = pd.DataFrame(perf_data)
-            
             fig = go.Figure()
             fig.add_trace(go.Bar(name='Input', x=df_perf['Agent'], y=df_perf['Input Tokens'], marker_color='#2196F3'))
             fig.add_trace(go.Bar(name='Output', x=df_perf['Agent'], y=df_perf['Output Tokens'], marker_color='#4CAF50'))
-            
-            fig.update_layout(
-                barmode='group',
-                template='plotly_dark' if st.session_state.theme_mode == 'dark' else 'plotly_white',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(barmode='group', template='plotly_dark' if st.session_state.theme_mode == 'dark' else 'plotly_white', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True, key="agent_performance_chart")
         else:
             st.info("Execute agents to see performance metrics")
     
     with col_viz2:
         st.subheader("🔄 Pipeline Flow")
-        
         if st.session_state.pipeline_results and PLOTLY_AVAILABLE:
             fig = create_agent_network_graph(st.session_state.pipeline_results)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+            if fig: st.plotly_chart(fig, use_container_width=True, key="dashboard_pipeline_flow_chart")
         else:
             st.info("Execute agents to see pipeline flow")
     
-    # Provider latency breakdown
     if st.session_state.last_latency:
         st.subheader("⏱️ Provider Latency Breakdown")
-        
         if PLOTLY_AVAILABLE:
-            lat_df = pd.DataFrame(list(st.session_state.last_latency.items()), 
-                                 columns=['Provider', 'Latency (s)'])
-            
-            fig = px.pie(lat_df, values='Latency (s)', names='Provider',
-                        color_discrete_sequence=px.colors.sequential.RdBu)
-            fig.update_layout(
-                template='plotly_dark' if st.session_state.theme_mode == 'dark' else 'plotly_white',
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.json(st.session_state.last_latency)
-    
-    # Word frequency analysis
-    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-    st.subheader("📝 Content Analysis")
-    
-    col_w1, col_w2 = st.columns(2)
-    
-    with col_w1:
-        st.markdown("**Input Keywords**")
-        if st.session_state.parsed_text:
-            st.markdown(create_word_cloud_viz(st.session_state.parsed_text), unsafe_allow_html=True)
-    
-    with col_w2:
-        st.markdown("**Output Keywords**")
-        all_outputs = " ".join(st.session_state.agent_outputs.values())
-        if all_outputs:
-            st.markdown(create_word_cloud_viz(all_outputs), unsafe_allow_html=True)
+            lat_df = pd.DataFrame(list(st.session_state.last_latency.items()), columns=['Provider', 'Latency (s)'])
+            fig = px.pie(lat_df, values='Latency (s)', names='Provider', color_discrete_sequence=px.colors.sequential.RdBu)
+            fig.update_layout(template='plotly_dark' if st.session_state.theme_mode == 'dark' else 'plotly_white', paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True, key="provider_latency_chart")
 
 # ==============================================================================
 # Tab 5: Reports & Export
@@ -1233,141 +1160,29 @@ with tab_dashboard:
 with tab_reports:
     st.header(f"📤 {t('reports')}")
     
-    st.subheader("📋 Pipeline Summary")
-    
     if st.session_state.pipeline_results:
-        # Create summary report
-        report_md = f"""# FDA Agent Pipeline Report
-## Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
-### Configuration
-- **Theme:** {st.session_state.theme_style} ({st.session_state.theme_mode} mode)
-- **Language:** {st.session_state.language}
-- **Total Agents:** {len(st.session_state.selected_agents)}
-- **Completed:** {len(st.session_state.agent_outputs)}
-### Pipeline Results
-"""
+        report_md = f"# FDA Agent Pipeline Report\n## Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         for result in st.session_state.pipeline_results:
-            report_md += f"""
-#### Step {result['step']}: {result['agent_name']}
-**Input Preview:**
-```
-{result['input'][:300]}...
-```
-**Output Preview:**
-```
-{result['output'][:300]}...
-```
----
-"""
-        
+            report_md += f"#### Step {result['step']}: {result['agent_name']}\n**Output Preview:**\n```\n{result['output'][:500]}...\n```\n---\n"
         st.markdown(report_md)
         
-        # Download options
         st.subheader(f"⬇️ {t('download')} Options")
-        
-        col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-        
+        col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
-            st.download_button(
-                "📄 Full Report (MD)",
-                data=report_md.encode('utf-8'),
-                file_name=f"fda_report_{int(time.time())}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        
+            st.download_button("📄 Full Report (MD)", data=report_md.encode('utf-8'), file_name=f"fda_report_{int(time.time())}.md", mime="text/markdown", use_container_width=True)
         with col_d2:
-            # Export pipeline results as JSON
-            json_export = json.dumps({
-                "config": {
-                    "theme": st.session_state.theme_style,
-                    "mode": st.session_state.theme_mode,
-                    "language": st.session_state.language
-                },
-                "agents": st.session_state.selected_agents,
-                "results": st.session_state.pipeline_results,
-                "outputs": st.session_state.agent_outputs
-            }, ensure_ascii=False, indent=2)
-            
-            st.download_button(
-                "📊 Results (JSON)",
-                data=json_export.encode('utf-8'),
-                file_name=f"pipeline_results_{int(time.time())}.json",
-                mime="application/json",
-                use_container_width=True
-            )
-        
+            json_export = json.dumps({"results": st.session_state.pipeline_results}, ensure_ascii=False, indent=2)
+            st.download_button("📊 Results (JSON)", data=json_export.encode('utf-8'), file_name=f"pipeline_results_{int(time.time())}.json", mime="application/json", use_container_width=True)
         with col_d3:
-            # Export as CSV
-            if st.session_state.pipeline_results:
-                df_results = pd.DataFrame(st.session_state.pipeline_results)
-                csv_data = df_results.to_csv(index=False).encode('utf-8')
-                
-                st.download_button(
-                    "📑 Results (CSV)",
-                    data=csv_data,
-                    file_name=f"pipeline_results_{int(time.time())}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        
-        with col_d4:
-            # Export configuration
-            config_yaml = yaml.dump({
-                "agents": st.session_state.agents_cfg.get("agents", []),
-                "selected_agents": st.session_state.selected_agents
-            }, allow_unicode=True)
-            
-            st.download_button(
-                "⚙️ Config (YAML)",
-                data=config_yaml.encode('utf-8'),
-                file_name=f"agents_config_{int(time.time())}.yaml",
-                mime="text/yaml",
-                use_container_width=True
-            )
-        
-        # Results table
-        st.subheader("📊 Detailed Results Table")
-        if st.session_state.pipeline_results:
-            df_display = pd.DataFrame([
-                {
-                    "Step": r["step"],
-                    "Agent": r["agent_name"],
-                    "Input Length": len(r["input"]),
-                    "Output Length": len(r["output"]),
-                    "Timestamp": time.strftime('%H:%M:%S', time.localtime(r["timestamp"]))
-                }
-                for r in st.session_state.pipeline_results
-            ])
-            st.dataframe(df_display, use_container_width=True)
+            df_results = pd.DataFrame(st.session_state.pipeline_results)
+            csv_data = df_results.to_csv(index=False).encode('utf-8')
+            st.download_button("📑 Results (CSV)", data=csv_data, file_name=f"pipeline_results_{int(time.time())}.csv", mime="text/csv", use_container_width=True)
     else:
-        st.info("Execute agents in the Pipeline tab to generate reports")
-        
-    # Agent configuration export
-    st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
-    st.subheader("📝 Export Agent Configuration")
-    
-    if st.button("Generate agents.yaml"):
-        config = {"version": 1, "agents": all_agents}
-        yaml_str = yaml.dump(config, allow_unicode=True, default_flow_style=False)
-        
-        st.code(yaml_str, language="yaml")
-        
-        st.download_button(
-            "⬇️ Download agents.yaml",
-            data=yaml_str.encode('utf-8'),
-            file_name="agents.yaml",
-            mime="text/yaml"
-        )
+        st.info("Execute a pipeline to generate reports.")
 
 # ==============================================================================
 # Footer
 # ==============================================================================
 st.markdown("<hr class='custom-divider'>", unsafe_allow_html=True)
 emoji = ANIMAL_THEMES[st.session_state.theme_style]["emoji"]
-st.markdown(f"""
-<div style='text-align: center; padding: 20px; color: var(--secondary-text-color);'>
-    <p>{emoji} <strong>Ferrari FDA Agent</strong> | Multi-Agent Pipeline System</p>
-    <p style='font-size: 0.9em;'>Theme: {st.session_state.theme_style} | Mode: {st.session_state.theme_mode} | Language: {st.session_state.language}</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align: center; padding: 20px; color: var(--secondary-text-color);'><p>{emoji} <strong>Ferrari FDA Agent</strong></p></div>", unsafe_allow_html=True)
