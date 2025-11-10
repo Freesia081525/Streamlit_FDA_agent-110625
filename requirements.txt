@@ -24,3 +24,4 @@ pypdf
 pyyaml
 openai
 xlsxwriter
+pypdf
