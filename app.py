@@ -826,7 +826,7 @@ with tab_upload:
             st.info("ℹ️ Advanced OCR requires the `poppler` library to be installed on your system.")
             ocr_provider = st.selectbox("LLM Provider", ["gemini", "openai"], key="ocr_provider")
             if ocr_provider == "gemini":
-                ocr_model = st.text_input("Vision Model Name", value="gemini-1.5-pro-latest", key="ocr_model_gemini")
+                ocr_model = st.text_input("Vision Model Name", value="gemini-2.5-flash", key="ocr_model_gemini")
             else:
                 ocr_model = st.text_input("Vision Model Name", value="gpt-4o", key="ocr_model_openai")
     
@@ -897,7 +897,7 @@ agents:
     enabled: true
     model:
       provider: gemini
-      name: gemini-1.5-flash
+      name: gemini-2.5-flash
       temperature: 0.3
       max_tokens: 4096
     prompt: |
