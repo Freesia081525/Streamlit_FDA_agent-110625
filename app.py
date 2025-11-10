@@ -125,7 +125,7 @@ agents:
     enabled: true
     model:
       provider: gemini
-      name: gemini-2.0-flash-exp
+      name: gemini-2.5-flash
       temperature: 0.25
       max_tokens: 4096
     prompt: |
@@ -142,7 +142,6 @@ agents:
       Quality:
       - Avoid hallucinations. If info is missing, explicitly say "Not Provided".
       - Do not include internal chain-of-thought; provide final conclusions only.
-
   - id: evidence_extractor
     name: Evidence Extractor
     description: Extract clinical evidence and safety data
@@ -160,14 +159,13 @@ agents:
       Output:
       - Return a structured JSON object with keys: clinical_evidence, safety_data, adverse_events, performance_testing, bench_testing, biocompatibility, sterilization, usability, notes.
       - Use concise bullet-like strings inside lists; no markdown code fences in the JSON text.
-
   - id: compliance_checker
     name: Compliance Checker
     description: Check 510(k) compliance across key categories
     enabled: true
     model:
       provider: gemini
-      name: gemini-2.0-flash-exp
+      name: gemini-2.5-flash
       temperature: 0.2
       max_tokens: 4096
     prompt: |
@@ -219,7 +217,6 @@ def get_theme_css(mode: str, style: str) -> str:
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-
         :root {{
             --primary-color: {theme["primary"]};
             --accent-color: {theme["accent"]};
@@ -229,22 +226,18 @@ def get_theme_css(mode: str, style: str) -> str:
             --secondary-text-color: {secondary_text};
             --card-border-color: {card_border};
         }}
-
         html, body, [class*="st-"] {{
             font-family: 'Roboto', sans-serif;
         }}
-
         .main {{
             background-color: var(--background-color);
             color: var(--text-color);
         }}
-
         h1, h2, h3 {{
             color: var(--primary-color);
             text-align: center;
             font-weight: 700;
         }}
-
         .stButton>button {{
             border: 2px solid var(--primary-color);
             border-radius: 25px;
@@ -254,24 +247,20 @@ def get_theme_css(mode: str, style: str) -> str:
             font-weight: bold;
             transition: all 0.3s ease-in-out;
         }}
-
         .stButton>button:hover {{
             background-color: var(--primary-color);
             color: white;
             transform: scale(1.05);
             box-shadow: 0 0 15px var(--primary-color);
         }}
-
         .stTextInput>div>div>input, .stTextArea>div>div>textarea, .stSelectbox>div>div>div {{
             background-color: var(--secondary-background-color);
             color: var(--text-color);
             border: 1px solid var(--card-border-color);
             border-radius: 8px;
         }}
-
         .highlight-positive {{ color: #4CAF50; font-weight: bold; }}
         .highlight-negative {{ color: #FF9800; font-weight: bold; }}
-
         .status-chip {{
             display: inline-block;
             padding: 8px 16px;
@@ -292,7 +281,6 @@ def get_theme_css(mode: str, style: str) -> str:
         .chip-info {{ background-color: rgba(33, 150, 243, 0.2); color:#2196F3; border-color: #2196F3; }}
         .chip-warn {{ background-color: rgba(244, 67, 54, 0.2); color:#F44336; border-color: #F44336; }}
         .chip-active {{ background-color: rgba(156, 39, 176, 0.2); color:#9C27B0; border-color: #9C27B0; }}
-
         .kpi-card {{
             background: linear-gradient(135deg, var(--secondary-background-color) 0%, var(--background-color) 100%);
             border-radius: 15px;
@@ -321,7 +309,6 @@ def get_theme_css(mode: str, style: str) -> str:
             color: var(--primary-color);
             margin: 5px 0 0 0;
         }}
-
         .custom-divider {{
             margin: 2rem 0;
             height: 2px;
@@ -724,16 +711,14 @@ with st.sidebar:
                 xai_key = xai_key_input
 
 # Initialize clients with API keys
-clients = get_model_clients(openai_key, gemini_key, xai_key)
-
+    clients = get_model_clients(openai_key, gemini_key, xai_key)
     # Provider Health
     with st.expander("⚙️ Provider Health"):
-        ph = st.session_state.provider_health
-        for prov in ["gemini", "openai", "grok"]:
-            status = ph.get(prov, "Not Configured")
-            chip_class = "chip-pass" if status == "OK" else "chip-warn"
-            st.markdown(f"**{prov}**: <span class='status-chip {chip_class}'>{status}</span>", unsafe_allow_html=True)
-
+         ph = st.session_state.provider_health
+         for prov in ["gemini", "openai", "grok"]:
+             status = ph.get(prov, "Not Configured")
+             chip_class = "chip-pass" if status == "OK" else "chip-warn"
+             st.markdown(f"**{prov}**: <span class='status-chip {chip_class}'>{status}</span>", unsafe_allow_html=True)
 # ==============================================================================
 # Main Application
 # ==============================================================================
@@ -830,7 +815,7 @@ agents:
     enabled: true
     model:
       provider: gemini
-      name: gemini-2.0-flash-exp
+      name: gemini-2.5-flash
       temperature: 0.25
       max_tokens: 4096
     prompt: |
@@ -874,7 +859,7 @@ agents:
                 is_selected = st.checkbox(
                     "Select",
                     value=agent_id in st.session_state.selected_agents,
-                    key=f"select_{agent_id}"
+                    key=f"select_{agent_id}_{i}"  # BUG FIX: Added index 'i' for uniqueness
                 )
                 if is_selected:
                     selected_agent_ids.append(agent_id)
@@ -892,13 +877,13 @@ agents:
                             "Provider",
                             ["auto", "gemini", "openai", "grok"],
                             index=["auto", "gemini", "openai", "grok"].index(model_cfg.get("provider", "auto")),
-                            key=f"provider_{agent_id}"
+                            key=f"provider_{agent_id}_{i}" # BUG FIX: Added index 'i'
                         )
                     with col_b:
                         model_name = st.text_input(
                             "Model",
                             value=model_cfg.get("name", ""),
-                            key=f"model_{agent_id}"
+                            key=f"model_{agent_id}_{i}" # BUG FIX: Added index 'i'
                         )
                     with col_c:
                         temperature = st.slider(
@@ -906,7 +891,7 @@ agents:
                             0.0, 1.0,
                             float(model_cfg.get("temperature", 0.3)),
                             0.05,
-                            key=f"temp_{agent_id}"
+                            key=f"temp_{agent_id}_{i}" # BUG FIX: Added index 'i'
                         )
                     
                     max_tokens = st.number_input(
@@ -915,14 +900,14 @@ agents:
                         max_value=8000,
                         value=int(model_cfg.get("max_tokens", 4096)),
                         step=100,
-                        key=f"tokens_{agent_id}"
+                        key=f"tokens_{agent_id}_{i}" # BUG FIX: Added index 'i'
                     )
                     
                     prompt = st.text_area(
                         "System Prompt",
                         value=agent.get("prompt", ""),
                         height=200,
-                        key=f"prompt_{agent_id}"
+                        key=f"prompt_{agent_id}_{i}" # BUG FIX: Added index 'i'
                     )
                     
                     # Update agent configuration
@@ -1254,30 +1239,24 @@ with tab_reports:
         # Create summary report
         report_md = f"""# FDA Agent Pipeline Report
 ## Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
-
 ### Configuration
 - **Theme:** {st.session_state.theme_style} ({st.session_state.theme_mode} mode)
 - **Language:** {st.session_state.language}
 - **Total Agents:** {len(st.session_state.selected_agents)}
 - **Completed:** {len(st.session_state.agent_outputs)}
-
 ### Pipeline Results
-
 """
         for result in st.session_state.pipeline_results:
             report_md += f"""
 #### Step {result['step']}: {result['agent_name']}
-
 **Input Preview:**
 ```
 {result['input'][:300]}...
 ```
-
 **Output Preview:**
 ```
 {result['output'][:300]}...
 ```
-
 ---
 """
         
