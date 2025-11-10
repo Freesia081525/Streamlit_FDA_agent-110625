@@ -567,6 +567,19 @@ def run_agent(agent_def: Dict[str, Any], user_input: str, clients: Dict[str, Any
         return f"Execution error: {str(e)}"
 
 # ==============================================================================
+# Initialize API Keys (before sidebar)
+# ==============================================================================
+# Initialize API keys from environment or set to None
+gem_env, gem_env_val = read_env_secret("GEMINI_API_KEY")
+gemini_key = gem_env_val if gem_env else None
+
+oa_env, oa_env_val = read_env_secret("OPENAI_API_KEY")
+openai_key = oa_env_val if oa_env else None
+
+xai_env, xai_env_val = read_env_secret("XAI_API_KEY")
+xai_key = xai_env_val if xai_env else None
+
+# ==============================================================================
 # Sidebar
 # ==============================================================================
 with st.sidebar:
@@ -613,29 +626,30 @@ with st.sidebar:
             st.rerun()
 
     # API Keys
-    with st.expander("🔐 " + t('api_keys')):
-        gem_env, gem_env_val = read_env_secret("GEMINI_API_KEY")
+    with st.expander("🔐 " + t('api_keys'), expanded=not (gem_env or oa_env or xai_env)):
         if gem_env:
-            st.success("Gemini API Key loaded")
-            gemini_key = gem_env_val
+            st.success("✅ Gemini API Key loaded from environment")
         else:
-            gemini_key = st.text_input("Gemini API Key", type="password")
+            gemini_key_input = st.text_input("Gemini API Key", type="password", key="gemini_input")
+            if gemini_key_input:
+                gemini_key = gemini_key_input
 
-        oa_env, oa_env_val = read_env_secret("OPENAI_API_KEY")
         if oa_env:
-            st.success("OpenAI API Key loaded")
-            openai_key = oa_env_val
+            st.success("✅ OpenAI API Key loaded from environment")
         else:
-            openai_key = st.text_input("OpenAI API Key", type="password")
+            openai_key_input = st.text_input("OpenAI API Key", type="password", key="openai_input")
+            if openai_key_input:
+                openai_key = openai_key_input
 
-        xai_env, xai_env_val = read_env_secret("XAI_API_KEY")
         if xai_env:
-            st.success("Grok API Key loaded")
-            xai_key = xai_env_val
+            st.success("✅ Grok API Key loaded from environment")
         else:
-            xai_key = st.text_input("XAI API Key", type="password")
+            xai_key_input = st.text_input("XAI API Key (Grok)", type="password", key="xai_input")
+            if xai_key_input:
+                xai_key = xai_key_input
 
-    clients = get_model_clients(openai_key, gemini_key, xai_key)
+# Initialize clients with API keys
+clients = get_model_clients(openai_key, gemini_key, xai_key)
 
     # Provider Health
     with st.expander("⚙️ Provider Health"):
