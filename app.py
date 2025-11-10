@@ -115,8 +115,72 @@ TRANSLATIONS = {
 st.set_page_config(page_title="Ferrari FDA Agent", page_icon="🏎️", layout="wide")
 
 # ==============================================================================
-# Session State Initialization
+# Default Sample Agents Configuration
 # ==============================================================================
+DEFAULT_SAMPLE_AGENTS = """version: 1
+agents:
+  - id: summarizer
+    name: Summary Generator
+    description: Generate a complete, structured summary of the submission
+    enabled: true
+    model:
+      provider: gemini
+      name: gemini-2.0-flash-exp
+      temperature: 0.25
+      max_tokens: 4096
+    prompt: |
+      You are a senior FDA medical device submission summarization expert.
+      Goals:
+      - Read the input document text (parsed from PDFs or pasted content).
+      - Produce a structured, precise, and complete summary in English.
+      - Cover device description, indications for use, summary of safety and effectiveness, substantial equivalence, clinical data synopsis, labeling notes, and known risks.
+      - Be concise, but thorough. Cite sections by quoting brief phrases when useful.
+      Formatting:
+      - Use clear sections with headings.
+      - Use bullet points for lists.
+      - Include a "Key Risks and Mitigations" section at the end.
+      Quality:
+      - Avoid hallucinations. If info is missing, explicitly say "Not Provided".
+      - Do not include internal chain-of-thought; provide final conclusions only.
+
+  - id: evidence_extractor
+    name: Evidence Extractor
+    description: Extract clinical evidence and safety data
+    enabled: true
+    model:
+      provider: openai
+      name: gpt-4o-mini
+      temperature: 0.25
+      max_tokens: 4096
+    prompt: |
+      You are a clinical evidence and safety data extraction expert for FDA 510(k) submissions.
+      Task:
+      - Extract all clinical evidence, safety data, adverse events, performance testing, bench testing, biocompatibility, sterilization validations, and usability findings.
+      - Provide source anchors when possible by quoting short text segments.
+      Output:
+      - Return a structured JSON object with keys: clinical_evidence, safety_data, adverse_events, performance_testing, bench_testing, biocompatibility, sterilization, usability, notes.
+      - Use concise bullet-like strings inside lists; no markdown code fences in the JSON text.
+
+  - id: compliance_checker
+    name: Compliance Checker
+    description: Check 510(k) compliance across key categories
+    enabled: true
+    model:
+      provider: gemini
+      name: gemini-2.0-flash-exp
+      temperature: 0.2
+      max_tokens: 4096
+    prompt: |
+      You are an FDA 510(k) compliance checker.
+      Task:
+      - Review content and assess compliance across categories: Indications for Use, Substantial Equivalence, Labeling, Device Description, Performance Testing, Biocompatibility, Sterilization, Software/Usability, Risk Management, Clinical Evidence.
+      - Mark each item as [YES] or [NO] for compliance presence, and provide short justification.
+      Output:
+      - Provide a clear, human-readable report. For each category:
+        - Category: <name> [YES|NO]
+        - Rationale: <1-3 sentences>
+      - End with a "Summary PASS/FAIL" line with rationale. Avoid chain-of-thought; report findings only.
+"""
 if "theme_mode" not in st.session_state: st.session_state.theme_mode = "dark"
 if "theme_style" not in st.session_state: st.session_state.theme_style = "Ferrari"
 if "language" not in st.session_state: st.session_state.language = "en"
@@ -375,11 +439,22 @@ def load_agents_config() -> Dict[str, Any]:
         config_path = Path("agents.yaml")
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-        return {"agents": []}
+                config = yaml.safe_load(f)
+                # Validate structure
+                if config and isinstance(config, dict) and "agents" in config:
+                    if isinstance(config["agents"], list):
+                        return config
+                    else:
+                        st.warning("Invalid agents.yaml structure: 'agents' is not a list")
+                        return {"version": 1, "agents": []}
+                else:
+                    st.warning("Invalid agents.yaml structure: missing 'agents' key")
+                    return {"version": 1, "agents": []}
+        # Return default empty config if file doesn't exist
+        return {"version": 1, "agents": []}
     except Exception as e:
         st.error(f"Error loading agents config: {e}")
-        return {"agents": []}
+        return {"version": 1, "agents": []}
 
 def get_enabled_agents(agents_cfg: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Safely filters and returns a list of enabled agent dictionaries."""
@@ -724,10 +799,64 @@ with tab_agent_select:
     
     if not all_agents:
         st.warning("No agents found in configuration. Please upload an agents.yaml file.")
-        agents_file = st.file_uploader("Upload agents.yaml", type=["yaml", "yml"])
+        
+        # Provide download for sample configuration
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Sample agents.yaml",
+                data=DEFAULT_SAMPLE_AGENTS.encode('utf-8'),
+                file_name="agents_sample.yaml",
+                mime="text/yaml",
+                use_container_width=True
+            )
+        with col2:
+            st.download_button(
+                "📥 Download 31-Agent Config (繁中)",
+                data=st.session_state.get("advanced_agents_yaml", "# Upload your own config").encode('utf-8'),
+                file_name="agents_fda_advanced_zh.yaml",
+                mime="text/yaml",
+                use_container_width=True,
+                disabled=True,
+                help="Full 31-agent configuration (see artifact fda_agents_yaml_zh)"
+            )
+        
+        st.info("Upload a YAML file with the following structure:")
+        st.code("""version: 1
+agents:
+  - id: agent_1
+    name: Agent Name
+    description: Agent description
+    enabled: true
+    model:
+      provider: gemini
+      name: gemini-2.0-flash-exp
+      temperature: 0.25
+      max_tokens: 4096
+    prompt: |
+      Your prompt here...
+""", language="yaml")
+        
+        agents_file = st.file_uploader("Upload agents.yaml", type=["yaml", "yml"], key="agents_uploader")
         if agents_file:
-            st.session_state.agents_cfg = yaml.safe_load(agents_file.getvalue())
-            st.rerun()
+            try:
+                uploaded_config = yaml.safe_load(agents_file.getvalue())
+                
+                # Validate structure
+                if not isinstance(uploaded_config, dict):
+                    st.error("Invalid YAML: Root must be a dictionary")
+                elif "agents" not in uploaded_config:
+                    st.error("Invalid YAML: Missing 'agents' key")
+                elif not isinstance(uploaded_config["agents"], list):
+                    st.error("Invalid YAML: 'agents' must be a list")
+                else:
+                    st.session_state.agents_cfg = uploaded_config
+                    st.success(f"✅ Loaded {len(uploaded_config['agents'])} agents from file")
+                    st.rerun()
+            except yaml.YAMLError as e:
+                st.error(f"YAML parsing error: {e}")
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
     else:
         st.subheader(f"🎯 {t('select_agents')}")
         
