@@ -1,5 +1,12 @@
  # agents.yaml
 agents:
+  summarizer:
+    description: "醫療器材審查摘要專家。"
+    default_prompt: "你是一位醫療器材審查摘要專家。請以繁體中文摘要內容in markdown with keyword in coral 請建立30 entities with context and comments in a table in traditional chinese. Please also create JSON dataset in traditional chinese based on previous results"
+    temperature: 0.1
+    max_tokens: 8096
+    provider: "Gemini"
+    model: "gemini-2.5-flash"
   資料擷取代理:
     description: "從非結構化文本中提取結構化資料。"
     default_prompt: "請從提供的文本中，識別並提取所有關鍵實體，例如人名、地點、組織、日期和產品名稱。請建立30 entities with context and comments in a table in traditional chinese. Please also create JSON dataset in traditional chinese based on previous results"
