@@ -21,6 +21,7 @@ matplotlib
 numpy
 pdf2image
 pypdf
+pypdf
 pyyaml
 openai
 xlsxwriter
